@@ -26,6 +26,7 @@ class ErdosRenyi:
         self.r = torch.tensor(self.r)
         
     def sample(self, K=1):
+        #This implementation is also slow but takes like 13 sec for 1000 graphs so it is fine
         samples = []
         for _ in range(K):
             idx = torch.randint(0,self.NDistribution.size(dim=0), (1,))
