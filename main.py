@@ -25,23 +25,18 @@ class ErdosRenyi:
         self.NDistribution = torch.tensor(self.NDistribution)
         self.r = torch.tensor(self.r)
         
-    def sample(self, K=1):
-        #This implementation is also slow but takes like 13 sec for 1000 graphs so it is fine
-        samples = []
-        for _ in range(K):
-            idx = torch.randint(0,self.NDistribution.size(dim=0), (1,))
-            N = self.NDistribution[idx]
-            r = self.r[N]
+    def sample(self):
+        idx = torch.randint(0,self.NDistribution.size(dim=0), (1,))
+        N = self.NDistribution[idx]
+        r = self.r[N]
 
-            #My hack is to generate a random matrix, (only care about upper triangular part) and then for each number smaller than r it becomes a connection, and then mirror it down to become symmetrical
-            randMatrix = torch.rand((N,N))
-            adjMatrix = (randMatrix < r).int()
-            adjMatrix = torch.triu(adjMatrix, diagonal=1)
-            adjMatrix = adjMatrix + adjMatrix.T
+        #My hack is to generate a random matrix, (only care about upper triangular part) and then for each number smaller than r it becomes a connection, and then mirror it down to become symmetrical
+        randMatrix = torch.rand((N,N))
+        adjMatrix = (randMatrix < r).int()
+        adjMatrix = torch.triu(adjMatrix, diagonal=1)
+        adjMatrix = adjMatrix + adjMatrix.T
 
-            samples.append(adjMatrix)
-
-        return samples
+        return adjMatrix
 
 device = 'cpu'
 samples = 1000
@@ -52,5 +47,5 @@ dataset = TUDataset(root='./data/', name='MUTAG').to(device)
 node_feature_dim = dataset.num_node_features
 
 # Create model
-erdosRenyi = ErdosRenyi(dataset)
-eRSamples = erdosRenyi.sample(samples)
+# erdosRenyi = ErdosRenyi(dataset)
+# eRSamples = erdosRenyi.sample(samples)
