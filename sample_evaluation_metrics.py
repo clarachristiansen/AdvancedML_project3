@@ -4,7 +4,7 @@ from torch_geometric.utils import to_dense_adj
 import numpy as np
 from collections import Counter
 import matplotlib.pyplot as plt
-from model import GNNEncoder, InnerProductDecoder, GaussianPrior, GraphVAE
+from model import GNNEncoder, InnerProductDecoder, MLPDecoder, GaussianPrior, GraphVAE
 from torch_geometric.datasets import TUDataset
 from torch_geometric.loader import DataLoader
 import torch
@@ -199,11 +199,12 @@ def main():
 
     # Load models
     node_feature_dim = 7  # 7 for MUTAG
-    STATE_DIM   = 128   
+    STATE_DIM   = 16   
     LATENT_DIM  = 32    
-    NUM_ROUNDS  = 5 
+    NUM_ROUNDS  = 3
     encoder = GNNEncoder(node_feature_dim, STATE_DIM, LATENT_DIM, NUM_ROUNDS)
-    decoder = InnerProductDecoder()
+    #decoder = InnerProductDecoder()
+    decoder = MLPDecoder(latent_dim=LATENT_DIM)
     prior   = GaussianPrior(LATENT_DIM)
     graph_VAE   = GraphVAE(encoder, decoder, prior).to(device)
     graph_VAE.load_state_dict(torch.load("models/graph_vae.pt", map_location=device))

@@ -5,7 +5,7 @@ from torch_geometric.loader import DataLoader
 from torch.utils.data import random_split
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from model import GNNEncoder, InnerProductDecoder, GaussianPrior, GraphVAE
+from model import GNNEncoder, InnerProductDecoder, GaussianPrior, GraphVAE, MLPDecoder
 
 
 # ---------------------------------------------------------------------------
@@ -13,12 +13,19 @@ from model import GNNEncoder, InnerProductDecoder, GaussianPrior, GraphVAE
 # losses are on the same scale and can be meaningfully compared.
 # ---------------------------------------------------------------------------
 
-FREE_BITS = 0.05   # nats per latent dimension (graph-size invariant)
+FREE_BITS = 0.0   # nats per latent dimension (graph-size invariant)
 
 
 def train_epoch(model, loader, optimizer, device, kl_beta: float = 1.0):
     model.train()
     total_loss = 0.0
+    total_recon = 0.0
+    total_kl = 0.0
+    total_mu = 0.0
+    total_sigma = 0.0
+    #total_bias = 0.0
+    count = 0
+
     for data in loader:
         data       = data.to(device)
         loss       = torch.tensor(0.0, device=device)
@@ -33,8 +40,15 @@ def train_epoch(model, loader, optimizer, device, kl_beta: float = 1.0):
             remap      = torch.full((mask.size(0),), -1, dtype=torch.long, device=device)
             remap[global_idx] = torch.arange(global_idx.size(0), device=device)
             ei_g_local = remap[ei_g]
-            loss += model(x_g, ei_g_local, x_g.size(0),
-                          kl_beta=kl_beta, free_bits=FREE_BITS)
+            out = model(x_g, ei_g_local, x_g.size(0),
+                          kl_beta=kl_beta, free_bits=FREE_BITS, return_parts=True)
+            loss += out["loss"]
+            total_recon += out["recon"].item()
+            total_kl += out["kl"].item()
+            total_mu += out["mu_abs"].item()
+            total_sigma += out["sigma"].item()
+            #total_bias += out["bias"].item()
+            count += 1
 
         loss = loss / num_graphs
         optimizer.zero_grad()
@@ -42,7 +56,16 @@ def train_epoch(model, loader, optimizer, device, kl_beta: float = 1.0):
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         total_loss += loss.item()
-    return total_loss / len(loader)
+    stats = {
+        "loss": total_loss / len(loader),
+        "recon": total_recon / count,
+        "kl": total_kl / count,
+        "mu_abs": total_mu / count,
+        "sigma": total_sigma / count,
+        #"bias": total_bias / count,
+    }
+    #return total_loss / len(loader), 
+    return stats
 
 
 @torch.no_grad()
@@ -106,19 +129,22 @@ if __name__ == "__main__":
     node_feature_dim = dataset.num_node_features   # 7 for MUTAG
 
     STATE_DIM    = 16
-    LATENT_DIM   = 16
+    LATENT_DIM   = 32
     NUM_ROUNDS   = 3
-    EPOCHS       = 200
+    EPOCHS       = 100
     LR           = 5e-4    # lower LR for smoother convergence
     WEIGHT_DECAY = 1e-4
     # Ramp β over 80% of training — slow enough that reconstruction has time
     # to learn structure before the KL penalty compresses the posterior.
     ANNEAL_EPOCHS = int(EPOCHS * 0.8)
+    MAX_BETA = 1e-1
+
 
     bias_init = estimate_bias_init(train_ds)
 
     encoder = GNNEncoder(node_feature_dim, STATE_DIM, LATENT_DIM, NUM_ROUNDS)
     decoder = InnerProductDecoder(init_bias=bias_init)
+    decoder = MLPDecoder(latent_dim=LATENT_DIM)
     prior   = GaussianPrior(LATENT_DIM)
     model   = GraphVAE(encoder, decoder, prior).to(device)
 
@@ -129,19 +155,30 @@ if __name__ == "__main__":
 
     train_losses, val_losses, betas = [], [], []
 
+
     for epoch in tqdm(range(1, EPOCHS + 1), desc="Training"):
-        kl_beta  = min(0.1, epoch / ANNEAL_EPOCHS)
-        tr_loss  = train_epoch(model, train_loader, optimizer, device, kl_beta=kl_beta)
+        kl_beta = MAX_BETA * min(1.0, epoch / ANNEAL_EPOCHS)
+        tr_stats  = train_epoch(model, train_loader, optimizer, device, kl_beta=kl_beta)
         val_loss = eval_epoch(model, val_loader, device)
         scheduler.step()
 
-        train_losses.append(tr_loss)
+        train_losses.append(tr_stats["loss"])
         val_losses.append(val_loss)
         betas.append(kl_beta)
 
         if epoch % 10 == 0:
-            print(f"Epoch {epoch:3d}  |  β={kl_beta:.2f}  "
-                  f"|  train={tr_loss:.4f}  |  val={val_loss:.4f}")
+            #print(f"Epoch {epoch:3d}  |  β={kl_beta:.2f}  "
+            #      f"|  train={tr_stats['loss']:.4f}  |  val={val_loss:.4f}")
+            print(
+                f"Epoch {epoch:3d} | "
+                f"β={kl_beta:.3f} | "
+                f"loss={tr_stats['loss']:.4f} | "
+                f"recon={tr_stats['recon']:.4f} | "
+                f"kl={tr_stats['kl']:.4f} | "
+                f"|μ|={tr_stats['mu_abs']:.4f} | "
+                f"σ={tr_stats['sigma']:.4f} | "
+                #f"bias={tr_stats['bias']:.4f}"
+            )
 
     test_loss = eval_epoch(model, test_loader, device)
     print(f"\nTest loss (neg ELBO): {test_loss:.4f}")

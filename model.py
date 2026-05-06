@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.distributions as td
-
+from torch_geometric.utils import negative_sampling
+import networkx as nx
 
 class GNNEncoder(nn.Module):
     """Message-passing GNN: (X, A) -> q(Z | X, A) per node."""
@@ -57,10 +58,27 @@ class InnerProductDecoder(nn.Module):
         self.bias = nn.Parameter(torch.tensor([init_bias]))
 
     def forward(self, z, edge_pairs):
-        z = nn.functional.normalize(z, p=2, dim=-1)
+        #z = nn.functional.normalize(z, p=2, dim=-1)
         u, v = edge_pairs[0], edge_pairs[1]
         return (z[u] * z[v]).sum(dim=-1) + self.bias
 
+
+class MLPDecoder(nn.Module):
+    def __init__(self, latent_dim):
+        super().__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(2 * latent_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
+
+    def forward(self, z, edge_pairs):
+        u, v = edge_pairs
+        x = torch.cat([z[u], z[v]], dim=-1)
+        return self.net(x).squeeze(-1)
 
 class GaussianPrior(nn.Module):
     def __init__(self, latent_dim: int):
@@ -94,7 +112,7 @@ class GraphVAE(nn.Module):
         self.prior   = prior
 
     def elbo(self, x, edge_index, num_nodes: int, n_samples: int = 3,
-             kl_beta: float = 1.0, free_bits: float = 0.5):
+             kl_beta: float = 1.0, free_bits: float = 0.5, return_parts: bool = False):
         """
         Parameters
         ----------
@@ -152,12 +170,33 @@ class GraphVAE(nn.Module):
         ]).mean()
         # print(f"Recon: {recon.item():.4f}, KL: {kl.item():.4f}")
 
-        return recon - kl * kl_beta
+        elbo = recon - kl * kl_beta
+
+        if return_parts:
+            with torch.no_grad():
+                mu_mean = q.base_dist.loc.abs().mean()
+                sigma_mean = q.base_dist.scale.mean()
+                #bias = self.decoder.bias.mean()
+
+            return {
+                "elbo": elbo,
+                "recon": recon.detach(),
+                "kl": kl.detach(),
+                "mu_abs": mu_mean.detach(),
+                "sigma": sigma_mean.detach(),
+                #"bias": bias.detach(),
+            }
+        return elbo
+
 
     def forward(self, x, edge_index, num_nodes: int,
-                kl_beta: float = 1.0, free_bits: float = 0.5):
-        return -self.elbo(x, edge_index, num_nodes,
-                          kl_beta=kl_beta, free_bits=free_bits)
+                kl_beta: float = 1.0, free_bits: float = 0.5, return_parts: bool = False):
+        out = self.elbo(x, edge_index, num_nodes,
+                          kl_beta=kl_beta, free_bits=free_bits, return_parts=return_parts)
+        if return_parts:
+            out["loss"] = -out["elbo"]
+            return out
+        return -out
 
     @torch.no_grad()
     def reconstruct_adj(self, x, edge_index):
@@ -169,11 +208,44 @@ class GraphVAE(nn.Module):
         pairs = torch.stack([u.reshape(-1), v.reshape(-1)])
         return torch.sigmoid(self.decoder(z, pairs)).reshape(N, N)
 
+    # @torch.no_grad()
+    # def sample(self, num_nodes: int, device):
+    #     z     = torch.randn(num_nodes, self.prior.latent_dim, device=device)
+    #     idx   = torch.arange(num_nodes, device=device)
+    #     u, v  = torch.meshgrid(idx, idx, indexing="ij")
+    #     pairs = torch.stack([u.reshape(-1), v.reshape(-1)])
+    #     probs = torch.sigmoid(self.decoder(z, pairs)).reshape(num_nodes, num_nodes)
+    #     return torch.bernoulli(probs)
     @torch.no_grad()
     def sample(self, num_nodes: int, device):
         z     = torch.randn(num_nodes, self.prior.latent_dim, device=device)
         idx   = torch.arange(num_nodes, device=device)
         u, v  = torch.meshgrid(idx, idx, indexing="ij")
         pairs = torch.stack([u.reshape(-1), v.reshape(-1)])
+
         probs = torch.sigmoid(self.decoder(z, pairs)).reshape(num_nodes, num_nodes)
-        return torch.bernoulli(probs)
+
+        # ---- REMOVE SELF-LOOPS ----
+        probs.fill_diagonal_(0)
+
+        # ---- SYMMETRIZE ----
+        probs = (probs + probs.T) / 2
+
+        # Sample
+        A = torch.bernoulli(probs)
+
+        # Convert to CPU numpy
+        A_np = A.cpu().float().numpy()
+
+        # Build graph
+        G = nx.from_numpy_array(A_np)
+
+        # Keep largest connected component
+        largest_cc = max(nx.connected_components(G), key=len)
+
+        G = G.subgraph(largest_cc).copy()
+
+        # Convert back to adjacency matrix
+        A_lcc = nx.to_numpy_array(G)
+
+        return torch.tensor(A_lcc, device=device, dtype=torch.float32)
