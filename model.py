@@ -218,6 +218,7 @@ class GraphVAE(nn.Module):
     #     return torch.bernoulli(probs)
     @torch.no_grad()
     def sample(self, num_nodes: int, device):
+        num_nodes = torch.randint(10, num_nodes, (1,)).item()  # Sample a random number of nodes up to num_nodes
         z     = torch.randn(num_nodes, self.prior.latent_dim, device=device)
         idx   = torch.arange(num_nodes, device=device)
         u, v  = torch.meshgrid(idx, idx, indexing="ij")
@@ -234,18 +235,20 @@ class GraphVAE(nn.Module):
         # Sample
         A = torch.bernoulli(probs)
 
-        # Convert to CPU numpy
-        A_np = A.cpu().float().numpy()
+        # # Convert to CPU numpy
+        # A_np = A.cpu().float().numpy()
 
-        # Build graph
-        G = nx.from_numpy_array(A_np)
+        # # Build graph
+        # G = nx.from_numpy_array(A_np)
 
-        # Keep largest connected component
-        largest_cc = max(nx.connected_components(G), key=len)
+        # # Keep largest connected component
+        # largest_cc = max(nx.connected_components(G), key=len)
 
-        G = G.subgraph(largest_cc).copy()
+        # G = G.subgraph(largest_cc).copy()
 
-        # Convert back to adjacency matrix
-        A_lcc = nx.to_numpy_array(G)
+        # # Convert back to adjacency matrix
+        # A_lcc = nx.to_numpy_array(G)
 
-        return torch.tensor(A_lcc, device=device, dtype=torch.float32)
+        # A = torch.tensor(A_lcc, device=device, dtype=torch.float32)
+
+        return A
