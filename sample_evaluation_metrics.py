@@ -32,43 +32,6 @@ def plot_graphs(graphs, title):
     plt.savefig(f"results/{title}.png", dpi=150)
     plt.show()
 
-# calculate the average number of nodes (adjacendy representation vs NX graphs) - used to ensure the convertion works and does not modify structures
-def mean_num_nodes(adj_samples, graph_samples, name_adj="Adj samples", name_graph="Graph samples"):
-    # --- adjacency matrices ---
-    adj_node_counts = []
-    for A in adj_samples:
-        A = np.asarray(A)
-
-        # handle possible squeezing / batching
-        A = np.squeeze(A)
-
-        # assume square adjacency matrix
-        n_nodes = A.shape[0]
-        adj_node_counts.append(n_nodes)
-
-    # --- networkx graphs ---
-    graph_node_counts = [G.number_of_nodes() for G in graph_samples]
-
-    # --- statistics ---
-    adj_mean = np.mean(adj_node_counts)
-    graph_mean = np.mean(graph_node_counts)
-
-    print("\n=== Mean Number of Nodes ===")
-    print(f"{name_adj:<20}: {adj_mean:.2f}")
-    print(f"{name_graph:<20}: {graph_mean:.2f}")
-
-    print("\n--- Details ---")
-    print(f"{name_adj}: min={np.min(adj_node_counts)}, max={np.max(adj_node_counts)}")
-    print(f"{name_graph}: min={np.min(graph_node_counts)}, max={np.max(graph_node_counts)}")
-
-    return adj_node_counts, graph_node_counts
-
-
-# convert continuous to binary
-def binarize_adj(A, threshold=0.5):
-    A = (A > threshold).astype(int)
-    np.fill_diagonal(A, 0)
-    return A
 
 # convert training graph to adjacncy matrix
 def graph_to_adj(data):
@@ -236,10 +199,6 @@ def main():
     plot_statistics(training_nx_graphs, baseline_graphs, generated_graphs)
 
     # minor statistics computed to verify e.g. density
-    for i in range(5):
-        A = adj_graph_VAE[i]
-        print("mean:", A.mean(), "std:", A.std())
-
     print("Train densities:")
     for i in range(5):
         print(nx.density(training_nx_graphs[i]))
@@ -256,9 +215,6 @@ def main():
     plot_graphs(training_nx_graphs, "Training Graphs")
     plot_graphs(baseline_graphs, "Baseline Graphs")
     plot_graphs(generated_graphs, "Generated Graphs")
-
-    # just comparing average number of nodes for adjacency vs NX representations
-    mean_num_nodes(adj_erdos_renyi,baseline_graphs)
 
 if __name__ == "__main__":
     main()
