@@ -1,7 +1,6 @@
 # Byte-compiled / optimized / DLL files
 data/MUTAG/
 results/*
-models/*
 __pycache__/
 *.py[codz]
 *$py.class
